@@ -1,0 +1,279 @@
+name: Build and Push Helm Chart
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build"
+        required: true
+        default: "0.0.1"
+
+env:
+  REGISTRY: ghcr.io
+  CHART_NAME: goclaw
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Build
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version format
+        id: get-version
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format X.Y.Z"
+            exit 1
+          fi
+          
+          echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          echo "✅ Release version: ${{ inputs.version }}"
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            echo "Expected format: v1.2.3 or v1.2.3-beta.1"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Release version: $VERSION"
+
+      - name: Check if prerelease
+        id: check-prerelease
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          if [[ $VERSION =~ -(alpha|beta|rc) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "📦 This is a pre-release"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "🚀 This is a stable release"
+          fi
+
+      - name: Check if tag already exists
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "❌ Tag $VERSION already exists"
+            exit 1
+          fi
+          echo "✅ Tag $VERSION is available"
+
+
+  package-helm:
+    name: Package Helm Chart
+    needs: [validate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      pages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Update Chart versions
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          
+          # Update main chart
+          sed -i "s/^version:.*/version: $VERSION_NO_V/" charts/${{ env.CHART_NAME }}/Chart.yaml
+
+      - name: Package Helm chart
+        run: |
+          helm package charts/${{ env.CHART_NAME }} --destination .
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Helm chart to GHCR (OCI)
+        run: |
+          VERSION_NO_V="${{ needs.validate.outputs.version }}"
+          VERSION_NO_V="${VERSION_NO_V#v}"
+          helm push ${{ env.CHART_NAME }}-${VERSION_NO_V}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+        continue-on-error: true
+
+      - name: Create gh-pages branch if it doesn't exist
+        run: |
+          if [ ! -d "gh-pages" ]; then
+            echo "Creating gh-pages branch..."
+            mkdir -p gh-pages
+            cd gh-pages
+            git init
+            git checkout -b gh-pages
+            git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          fi
+
+      - name: Update Helm repository index
+        run: |
+          VERSION_NO_V="${{ needs.validate.outputs.version }}"
+          VERSION_NO_V="${VERSION_NO_V#v}"
+          
+          # Copy packaged chart to gh-pages
+          cp ${{ env.CHART_NAME }}-${VERSION_NO_V}.tgz gh-pages/
+          
+          # Generate/update index
+          cd gh-pages
+          helm repo index . --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          
+          # Create README if it doesn't exist
+          if [ ! -f "README.md" ]; then
+            cat > README.md << 'EOF'
+          # ${{ env.CHART_NAME }} Helm Chart Repository
+          
+          This is the official Helm chart repository for ${{ env.CHART_NAME }}.
+          
+          ## Usage
+          
+          Add this Helm repository:
+          
+          ```bash
+          helm repo add ${{ env.CHART_NAME }} https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          helm repo update
+          ```
+          
+          Install ${{ env.CHART_NAME }}:
+          
+          ```bash
+          helm install ${{ env.CHART_NAME }} ${{ env.CHART_NAME }}/$({{ env.CHART_NAME }}) --version $VERSION
+          ```
+          
+          ## Available Charts
+          
+          - **$({{ env.CHART_NAME }})** - ${{ env.CHART_NAME }} - $VERSION
+          
+          ## OCI Registry (Alternative)
+          
+          You can also install directly from OCI registries:
+          
+          ### GitHub Container Registry
+          
+          ```bash
+          helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/charts/{{ env.CHART_NAME }} --version VERSION
+          ```
+          fi
+
+      - name: Commit and push to gh-pages
+        run: |
+          cd gh-pages
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if we're on the right branch, if not switch/create it
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "none")
+          if [[ "$CURRENT_BRANCH" != "gh-pages" ]]; then
+            echo "Creating and switching to gh-pages branch..."
+            git checkout -B gh-pages
+          fi
+          
+          # Add and commit changes
+          git add .
+          git commit -m "Update Helm chart repository - ${{ needs.validate.outputs.version }}" || echo "No changes to commit"
+          
+          # Push to gh-pages branch
+          git push -f origin gh-pages
+
+      - name: Upload Helm chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: ${{ env.CHART_NAME }}-*.tgz
+          retention-days: 90
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, package-helm]
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Helm chart
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart
+          path: ./artifacts/helm-chart
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          
+          # Get previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [[ -z "$PREVIOUS_TAG" ]]; then
+            echo "No previous tag found, using all commits"
+            COMMITS=$(git log --pretty=format:"* %s (%h)" --no-merges)
+          else
+            echo "Generating changelog from $PREVIOUS_TAG to $VERSION"
+            COMMITS=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"* %s (%h)" --no-merges)
+          fi
+          
+          # Create changelog file
+          cat > CHANGELOG.md << EOF
+          ## What's Changed
+          
+          $COMMITS
+          
+          ## Helm Installation
+          
+          \`\`\`bash
+          helm install ${{ env.CHART_NAME }} ${{ env.CHART_NAME }}/$({{ env.CHART_NAME }}) --version $VERSION
+          \`\`\`
+          
+          EOF
+          
+          echo "changelog_file=CHANGELOG.md" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: Release ${{ needs.validate.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          generate_release_notes: true
+          files: |
+            ./artifacts/helm-chart/${{ env.CHART_NAME }}-*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
