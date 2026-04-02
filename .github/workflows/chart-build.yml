@@ -153,38 +153,38 @@ jobs:
           # Create README if it doesn't exist
           if [ ! -f "README.md" ]; then
             cat > README.md << 'EOF'
-          # ${{ env.CHART_NAME }} Helm Chart Repository
-          
-          This is the official Helm chart repository for ${{ env.CHART_NAME }}.
-          
-          ## Usage
-          
-          Add this Helm repository:
-          
-          ```bash
-          helm repo add ${{ env.CHART_NAME }} https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-          helm repo update
-          ```
-          
-          Install ${{ env.CHART_NAME }}:
-          
-          ```bash
-          helm install ${{ env.CHART_NAME }} ${{ env.CHART_NAME }}/$({{ env.CHART_NAME }}) --version $VERSION
-          ```
-          
-          ## Available Charts
-          
-          - **$({{ env.CHART_NAME }})** - ${{ env.CHART_NAME }} - $VERSION
-          
-          ## OCI Registry (Alternative)
-          
-          You can also install directly from OCI registries:
-          
-          ### GitHub Container Registry
-          
-          ```bash
-          helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/helm/{{ env.CHART_NAME }} --version VERSION
-          ```
+            # ${{ env.CHART_NAME }} Helm Chart Repository
+            
+            This is the official Helm chart repository for ${{ env.CHART_NAME }}.
+            
+            ## Usage
+            
+            Add this Helm repository:
+            
+            ```bash
+            helm repo add ${{ env.CHART_NAME }} https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+            helm repo update
+            ```
+            
+            Install ${{ env.CHART_NAME }}:
+            
+            ```bash
+            helm install ${{ env.CHART_NAME }} ${{ env.CHART_NAME }}/$({{ env.CHART_NAME }}) --version $VERSION
+            ```
+            
+            ## Available Charts
+            
+            - **$({{ env.CHART_NAME }})** - ${{ env.CHART_NAME }} - $VERSION
+            
+            ## OCI Registry (Alternative)
+            
+            You can also install directly from OCI registries:
+            
+            ### GitHub Container Registry
+            
+            ```bash
+            helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/helm/{{ env.CHART_NAME }} --version VERSION
+            ```
           fi
 
       - name: Commit and push to gh-pages
