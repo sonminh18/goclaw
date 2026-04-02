@@ -100,11 +100,11 @@ jobs:
           VERSION_NO_V="${VERSION#v}"
           
           # Update main chart
-          sed -i "s/^version:.*/version: $VERSION_NO_V/" charts/${{ env.CHART_NAME }}/Chart.yaml
+          sed -i "s/^version:.*/version: $VERSION_NO_V/" helm/${{ env.CHART_NAME }}/Chart.yaml
 
       - name: Package Helm chart
         run: |
-          helm package charts/${{ env.CHART_NAME }} --destination .
+          helm package helm/${{ env.CHART_NAME }} --destination .
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -183,7 +183,7 @@ jobs:
           ### GitHub Container Registry
           
           ```bash
-          helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/charts/{{ env.CHART_NAME }} --version VERSION
+          helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/helm/{{ env.CHART_NAME }} --version VERSION
           ```
           fi
 
