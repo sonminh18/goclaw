@@ -1,0 +1,61 @@
+{{- if and .Values.telemetry.enabled .Values.telemetry.jaeger.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "goclaw.jaeger.fullname" . }}
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tracing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "goclaw.name" . }}-jaeger
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "goclaw.name" . }}-jaeger
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: tracing
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: jaeger
+          image: "{{ .Values.telemetry.jaeger.image.repository }}:{{ .Values.telemetry.jaeger.image.tag }}"
+          ports:
+            - name: ui
+              containerPort: 16686
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: ui
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: ui
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+{{- end }}

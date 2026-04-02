@@ -1,0 +1,75 @@
+{{- if .Values.persistence.data.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "goclaw.fullname" . }}-data
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.data.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.data.size }}
+  {{- if .Values.persistence.data.storageClass }}
+  storageClassName: {{ .Values.persistence.data.storageClass | quote }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.persistence.workspace.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "goclaw.fullname" . }}-workspace
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.workspace.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.workspace.size }}
+  {{- if .Values.persistence.workspace.storageClass }}
+  storageClassName: {{ .Values.persistence.workspace.storageClass | quote }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.persistence.skills.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "goclaw.fullname" . }}-skills
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.skills.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.skills.size }}
+  {{- if .Values.persistence.skills.storageClass }}
+  storageClassName: {{ .Values.persistence.skills.storageClass | quote }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.tailscale.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "goclaw.fullname" . }}-tsnet-state
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tailscale
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.tailscale.persistence.size }}
+  {{- if .Values.tailscale.persistence.storageClass }}
+  storageClassName: {{ .Values.tailscale.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

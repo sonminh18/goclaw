@@ -1,0 +1,115 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "goclaw.fullname" . }}-migrate
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "goclaw.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "goclaw.serviceAccountName" . }}
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.pgvector.enabled }}
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              until nc -z "{{ include "goclaw.pgvector.fullname" . }}" {{ .Values.pgvector.service.port | default 5432 }}; do
+                echo "waiting for postgres at {{ include "goclaw.pgvector.fullname" . }}:{{ .Values.pgvector.service.port | default 5432 }}"
+                sleep 2
+              done
+              echo "postgres reachable"
+      {{- end }}
+      containers:
+        - name: migrate
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "goclaw.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.pgvector.enabled }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              {{ include "goclaw.pgvectorDsnExport" . | trim | nindent 14 }}
+              exec /app/goclaw upgrade
+          {{- else }}
+          command: ["/app/goclaw"]
+          args: ["upgrade"]
+          {{- end }}
+          env:
+            - name: GOCLAW_CONFIG
+              value: /app/data/config.json
+            - name: GOCLAW_DATA_DIR
+              value: /app/data
+            - name: GOCLAW_MIGRATIONS_DIR
+              value: /app/migrations
+            {{- /* Encryption key */}}
+            {{- if or .Values.gateway.encryptionKey .Values.gateway.existingEncryptionKeySecret }}
+            - name: GOCLAW_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.encryptionKeySecretName" . }}
+                  key: GOCLAW_ENCRYPTION_KEY
+            {{- end }}
+            {{- /* Database DSN */}}
+            {{- if .Values.externalDatabase.enabled }}
+            - name: GOCLAW_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.postgresSecretName" . }}
+                  key: GOCLAW_POSTGRES_DSN
+            {{- else if .Values.pgvector.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.pgvector.secretName" . }}
+                  key: password
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: data
+          {{- if .Values.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "goclaw.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

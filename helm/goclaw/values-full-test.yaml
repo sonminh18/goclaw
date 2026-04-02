@@ -1,0 +1,89 @@
+# Local / CI: exercise all optional chart features (except Tailscale — needs real auth key).
+# Usage:
+#   ENC=$(openssl rand -base64 32)
+#   helm upgrade --install goclaw . --kube-context orbstack -n goclaw --create-namespace \
+#     -f values-full-test.yaml --set gateway.encryptionKey="$ENC" --wait --timeout 25m
+#
+# Gateway image must match enabled features: Redis needs -tags redis; OTel needs -tags otel.
+# If the public image lacks these, set image.tag to a custom build or disable redis/telemetry.
+
+externalDatabase:
+  enabled: false
+
+pgvector:
+  enabled: true
+  postgresql:
+    database: goclaw
+    username: goclaw
+    replicaCount: 0
+    existingSecret:
+      enabled: true
+      name: goclaw-pgvector-auth
+      usernameKey: username
+      passwordKey: password
+      databaseKey: database
+    persistence:
+      size: 2Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  repmgr:
+    enabled: false
+  pgpool:
+    enabled: false
+
+redis:
+  enabled: true
+  auth:
+    password: "goclaw-redis-test"
+  master:
+    persistence:
+      size: 1Gi
+
+ui:
+  enabled: true
+
+chrome:
+  enabled: true
+
+telemetry:
+  enabled: true
+  jaeger:
+    enabled: true
+
+ingress:
+  enabled: true
+  className: ""
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+  hosts:
+    - host: goclaw.local
+      paths: []
+
+tailscale:
+  enabled: false
+
+sandbox:
+  mode: disabled
+
+persistence:
+  data:
+    size: 2Gi
+  workspace:
+    size: 2Gi
+  skills:
+    size: 1Gi
+
+gateway:
+  token: local-test-gateway-token
+
+podDisruptionBudget:
+  enabled: true
+
+networkPolicy:
+  enabled: false

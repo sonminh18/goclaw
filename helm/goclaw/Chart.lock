@@ -1,0 +1,9 @@
+dependencies:
+- name: redis
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 20.13.4
+- name: pgvector
+  repository: https://cagriekin.github.io/charts
+  version: 0.6.36
+digest: sha256:d482668cd2a2e2890d753656cdfdc6070e081fe9179be0f3addd1b84de89847b
+generated: "2026-04-01T11:36:09.166035+07:00"

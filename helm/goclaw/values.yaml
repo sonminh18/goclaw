@@ -1,0 +1,319 @@
+# GoClaw Helm Chart - Production Values
+# https://github.com/nextlevelbuilder/goclaw
+
+# -- Number of gateway replicas. Keep at 1 unless you've verified WebSocket
+# session stickiness and shared PVC compatibility for horizontal scaling.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/nextlevelbuilder/goclaw
+  pullPolicy: IfNotPresent
+  # -- Tag defaults to Chart appVersion. Use a tag with appropriate build flags
+  # for enabled features (e.g., image built with -tags redis,otel,tsnet).
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: false
+  runAsUser: 0
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - SETUID
+      - SETGID
+      - CHOWN
+
+service:
+  type: ClusterIP
+  port: 18790
+
+# -- Gateway configuration
+gateway:
+  # -- Gateway authentication token (required for production)
+  token: ""
+  # -- Existing secret containing GOCLAW_GATEWAY_TOKEN key
+  existingTokenSecret: ""
+  # -- AES-256-GCM encryption key for API keys stored in database.
+  # Generate with: openssl rand -base64 32
+  encryptionKey: ""
+  # -- Existing secret containing GOCLAW_ENCRYPTION_KEY key
+  existingEncryptionKeySecret: ""
+  # -- Comma-separated owner user IDs with cross-tenant access
+  ownerIds: ""
+  # -- Comma-separated allowed CORS origins
+  allowedOrigins: ""
+  # -- Verbose tracing (0 or 1)
+  traceVerbose: "0"
+  # -- InitContainer: wait for dependencies before gateway starts
+  waitForDependencies:
+    enabled: true
+    image:
+      repository: busybox
+      tag: "1.36"
+
+# -- Persistence configuration
+persistence:
+  data:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  workspace:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  skills:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+# -- Database configuration
+# PostgreSQL with pgvector extension is required.
+# Options:
+#   1. externalDatabase (recommended for production): Use managed Postgres with pgvector
+#   2. pgvector.enabled: In-cluster pgvector/pgvector via subchart dependency
+externalDatabase:
+  # -- Use external database (RDS, Cloud SQL, AlloyDB, etc.)
+  enabled: true
+  # -- Full PostgreSQL connection string
+  # Example: postgres://user:pass@host:5432/dbname?sslmode=require
+  dsn: ""
+  # -- Existing secret containing GOCLAW_POSTGRES_DSN key
+  existingSecret: ""
+  # -- Optional: hostname for gateway initContainer TCP wait (DSN alone is not parsed)
+  waitHost: ""
+  waitPort: 5432
+
+# -- In-cluster PostgreSQL via pgvector subchart (cagriekin/pgvector)
+# Deploys pgvector/pgvector:pg18 StatefulSet + Service + Secret.
+# The subchart Secret (<release>-pgvector) contains keys: username, password, database.
+# See: https://cagriekin.github.io/charts
+pgvector:
+  enabled: false
+  postgresql:
+    image:
+      repository: pgvector/pgvector
+      tag: pg18-trixie
+    # -- Subchart adds 1 internally, so 0 = single replica (no HA).
+    replicaCount: 0
+    database: goclaw
+    username: goclaw
+    # -- Password is managed by our secret-pgvector.yaml (lookup-based persistence).
+    # The subchart's built-in secret regenerates on every upgrade; we bypass it with existingSecret.
+    # IMPORTANT: existingSecret.name must match the secret created by secret-pgvector.yaml.
+    # Default follows: "<fullname>-pgvector-auth". For `helm install goclaw ...` → "goclaw-pgvector-auth".
+    # If your release name differs, override with --set pgvector.postgresql.existingSecret.name=<release>-pgvector-auth
+    existingSecret:
+      enabled: true
+      name: goclaw-pgvector-auth
+      usernameKey: username
+      passwordKey: password
+      databaseKey: database
+    persistence:
+      size: 50Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+  repmgr:
+    enabled: false
+  pgpool:
+    enabled: false
+  service:
+    port: 5432
+
+# -- Redis configuration (optional caching layer)
+# Requires gateway image built with -tags redis
+redis:
+  enabled: false
+  global:
+    security:
+      allowInsecureImages: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis
+    tag: 7.4.3-debian-12-r0
+  auth:
+    enabled: true
+    password: ""
+    existingSecret: ""
+  master:
+    persistence:
+      size: 8Gi
+  replica:
+    replicaCount: 0
+
+# -- Web UI (React SPA served via nginx)
+ui:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/nextlevelbuilder/goclaw-web
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# -- Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+  hosts:
+    - host: goclaw.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: goclaw-tls
+  #    hosts:
+  #      - goclaw.example.com
+
+# -- Chrome CDP sidecar for browser automation
+chrome:
+  enabled: false
+  image:
+    repository: zenika/alpine-chrome
+    tag: "124"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  shmSize: 2Gi
+
+# -- OpenTelemetry / Jaeger tracing
+# Requires gateway image built with -tags otel
+telemetry:
+  enabled: false
+  endpoint: ""
+  protocol: grpc
+  insecure: true
+  serviceName: goclaw-gateway
+  # -- Deploy Jaeger all-in-one for development/testing
+  jaeger:
+    enabled: false
+    image:
+      repository: jaegertracing/all-in-one
+      tag: "1.68.0"
+
+# -- Tailscale (tsnet) secure remote access
+# Requires gateway image built with -tags tsnet
+tailscale:
+  enabled: false
+  hostname: goclaw-gateway
+  # -- Tailscale auth key (from https://login.tailscale.com/admin/settings/keys)
+  authKey: ""
+  existingSecret: ""
+  persistence:
+    size: 1Gi
+    storageClass: ""
+
+# -- Sandbox configuration
+# WARNING: Docker socket mounting is NOT supported in Kubernetes for security.
+sandbox:
+  # -- Sandbox mode: "disabled" (default), "remote", or "dind" (experimental)
+  mode: disabled
+  # -- For mode=remote: URL of external sandbox service
+  remoteUrl: ""
+
+# -- Resource limits for gateway
+resources:
+  limits:
+    cpu: "2"
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# -- Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# -- Pod Disruption Budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# -- Network Policy
+networkPolicy:
+  enabled: false
+
+# -- Extra environment variables for gateway
+extraEnv: []
+
+# -- Extra volume mounts for gateway
+extraVolumeMounts: []
+
+# -- Extra volumes for gateway
+extraVolumes: []
