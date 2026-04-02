@@ -185,6 +185,7 @@ jobs:
             ```bash
             helm install ${{ env.CHART_NAME }} oci://ghcr.io/${{ github.repository_owner }}/helm/{{ env.CHART_NAME }} --version VERSION
             ```
+            EOF
           fi
 
       - name: Commit and push to gh-pages
