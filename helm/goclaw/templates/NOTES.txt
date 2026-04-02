@@ -1,0 +1,68 @@
+GoClaw has been deployed!
+
+{{- if .Values.ingress.enabled }}
+Access the application via:
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}
+{{- end }}
+{{- else }}
+
+To access the application, run:
+
+  kubectl port-forward svc/{{ include "goclaw.fullname" . }} 18790:{{ .Values.service.port }}
+
+Then open http://localhost:18790
+{{- end }}
+
+{{- if .Values.ui.enabled }}
+
+Web Dashboard:
+{{- if .Values.ingress.enabled }}
+  Access via the ingress URL above (static assets served from /)
+{{- else }}
+  kubectl port-forward svc/{{ include "goclaw.ui.fullname" . }} 3000:{{ .Values.ui.service.port }}
+  Then open http://localhost:3000
+{{- end }}
+{{- end }}
+
+{{- if .Values.telemetry.enabled }}
+{{- if .Values.telemetry.jaeger.enabled }}
+
+Jaeger UI (tracing):
+  kubectl port-forward svc/{{ include "goclaw.jaeger.fullname" . }} 16686:16686
+  Then open http://localhost:16686
+{{- end }}
+{{- end }}
+
+Database:
+{{- if .Values.externalDatabase.enabled }}
+  Using external PostgreSQL (provided via externalDatabase.dsn)
+{{- else if .Values.pgvector.enabled }}
+  Using in-cluster pgvector subchart ({{ .Release.Name }}-pgvector)
+  Service: {{ include "goclaw.pgvector.fullname" . }}:{{ .Values.pgvector.service.port | default 5432 }}
+{{- else }}
+  WARNING: No database configured! Set one of:
+    - externalDatabase.enabled=true with externalDatabase.dsn
+    - pgvector.enabled=true
+{{- end }}
+
+{{- if .Values.redis.enabled }}
+
+Redis:
+  Caching layer enabled. Ensure your gateway image was built with -tags redis
+{{- end }}
+
+{{- if .Values.chrome.enabled }}
+
+Browser Automation:
+  Chrome CDP sidecar enabled at ws://{{ include "goclaw.chrome.fullname" . }}:9222
+{{- end }}
+
+{{- if .Values.tailscale.enabled }}
+
+Tailscale:
+  Device name: {{ .Values.tailscale.hostname }}
+  Access via your Tailscale network
+{{- end }}
+
+For more information, visit: https://github.com/nextlevelbuilder/goclaw

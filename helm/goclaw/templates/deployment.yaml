@@ -1,0 +1,254 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "goclaw.fullname" . }}
+  labels:
+    {{- include "goclaw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "goclaw.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "goclaw.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "goclaw.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.gateway.waitForDependencies.enabled (or .Values.pgvector.enabled (and .Values.externalDatabase.enabled .Values.externalDatabase.waitHost) .Values.redis.enabled .Values.chrome.enabled (and .Values.telemetry.enabled .Values.telemetry.jaeger.enabled)) }}
+      initContainers:
+        - name: wait-for-dependencies
+          image: "{{ .Values.gateway.waitForDependencies.image.repository }}:{{ .Values.gateway.waitForDependencies.image.tag }}"
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              wait_tcp() {
+                h="$1"; p="$2"; n="$3"
+                until nc -z "$h" "$p"; do echo "waiting for $n ($h:$p)"; sleep 2; done
+                echo "ok: $n"
+              }
+              {{- if .Values.pgvector.enabled }}
+              wait_tcp {{ include "goclaw.pgvector.fullname" . }} {{ .Values.pgvector.service.port | default 5432 }} postgres
+              {{- end }}
+              {{- if and .Values.externalDatabase.enabled .Values.externalDatabase.waitHost }}
+              wait_tcp {{ .Values.externalDatabase.waitHost }} {{ .Values.externalDatabase.waitPort | default 5432 }} postgres
+              {{- end }}
+              {{- if .Values.redis.enabled }}
+              wait_tcp {{ printf "%s-redis-master" .Release.Name }} 6379 redis
+              {{- end }}
+              {{- if .Values.chrome.enabled }}
+              wait_tcp {{ include "goclaw.chrome.fullname" . }} 9222 chrome-cdp
+              {{- end }}
+              {{- if and .Values.telemetry.enabled .Values.telemetry.jaeger.enabled }}
+              wait_tcp {{ include "goclaw.jaeger.fullname" . }} 4317 jaeger-otlp
+              {{- end }}
+              echo "dependency checks complete"
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "goclaw.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.pgvector.enabled }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              {{ include "goclaw.pgvectorDsnExport" . | trim | nindent 14 }}
+              exec /app/goclaw
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 18790
+              protocol: TCP
+          env:
+            - name: GOCLAW_HOST
+              value: "0.0.0.0"
+            - name: GOCLAW_PORT
+              value: "18790"
+            - name: GOCLAW_CONFIG
+              value: /app/data/config.json
+            - name: GOCLAW_DATA_DIR
+              value: /app/data
+            - name: GOCLAW_WORKSPACE
+              value: /app/workspace
+            - name: GOCLAW_SKILLS_DIR
+              value: /app/skills
+            - name: GOCLAW_MIGRATIONS_DIR
+              value: /app/migrations
+            {{- if .Values.gateway.traceVerbose }}
+            - name: GOCLAW_TRACE_VERBOSE
+              value: {{ .Values.gateway.traceVerbose | quote }}
+            {{- end }}
+            {{- if .Values.gateway.ownerIds }}
+            - name: GOCLAW_OWNER_IDS
+              value: {{ .Values.gateway.ownerIds | quote }}
+            {{- end }}
+            {{- if .Values.gateway.allowedOrigins }}
+            - name: GOCLAW_ALLOWED_ORIGINS
+              value: {{ .Values.gateway.allowedOrigins | quote }}
+            {{- end }}
+            {{- /* Gateway token */}}
+            {{- if or .Values.gateway.token .Values.gateway.existingTokenSecret }}
+            - name: GOCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.gatewayTokenSecretName" . }}
+                  key: GOCLAW_GATEWAY_TOKEN
+            {{- end }}
+            {{- /* Encryption key */}}
+            {{- if or .Values.gateway.encryptionKey .Values.gateway.existingEncryptionKeySecret }}
+            - name: GOCLAW_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.encryptionKeySecretName" . }}
+                  key: GOCLAW_ENCRYPTION_KEY
+            {{- end }}
+            {{- /* Database DSN */}}
+            {{- if .Values.externalDatabase.enabled }}
+            - name: GOCLAW_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.postgresSecretName" . }}
+                  key: GOCLAW_POSTGRES_DSN
+            {{- else if .Values.pgvector.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.pgvector.secretName" . }}
+                  key: password
+            {{- end }}
+            {{- /* Redis DSN */}}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.redisSecretName" . }}
+                  key: redis-password
+            - name: GOCLAW_REDIS_DSN
+              value: {{ include "goclaw.redisDsn" . | quote }}
+            {{- end }}
+            {{- /* Chrome browser URL */}}
+            {{- if .Values.chrome.enabled }}
+            - name: GOCLAW_BROWSER_REMOTE_URL
+              value: "ws://{{ include "goclaw.chrome.fullname" . }}:9222"
+            {{- end }}
+            {{- /* Telemetry */}}
+            {{- if .Values.telemetry.enabled }}
+            - name: GOCLAW_TELEMETRY_ENABLED
+              value: "true"
+            - name: GOCLAW_TELEMETRY_ENDPOINT
+              value: {{ .Values.telemetry.endpoint | default (printf "%s:4317" (include "goclaw.jaeger.fullname" .)) | quote }}
+            - name: GOCLAW_TELEMETRY_PROTOCOL
+              value: {{ .Values.telemetry.protocol | quote }}
+            - name: GOCLAW_TELEMETRY_INSECURE
+              value: {{ .Values.telemetry.insecure | quote }}
+            - name: GOCLAW_TELEMETRY_SERVICE_NAME
+              value: {{ .Values.telemetry.serviceName | quote }}
+            {{- end }}
+            {{- /* Tailscale */}}
+            {{- if .Values.tailscale.enabled }}
+            - name: GOCLAW_TSNET_HOSTNAME
+              value: {{ .Values.tailscale.hostname | quote }}
+            - name: GOCLAW_TSNET_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goclaw.tailscaleSecretName" . }}
+                  key: GOCLAW_TSNET_AUTH_KEY
+            {{- end }}
+            {{- /* Sandbox (disabled by default in K8s) */}}
+            {{- if eq .Values.sandbox.mode "disabled" }}
+            - name: GOCLAW_SANDBOX_MODE
+              value: "disabled"
+            {{- else if eq .Values.sandbox.mode "remote" }}
+            - name: GOCLAW_SANDBOX_MODE
+              value: "remote"
+            - name: GOCLAW_SANDBOX_REMOTE_URL
+              value: {{ .Values.sandbox.remoteUrl | quote }}
+            {{- end }}
+            {{- /* Extra env vars */}}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: workspace
+              mountPath: /app/workspace
+            - name: skills
+              mountPath: /app/skills
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.tailscale.enabled }}
+            - name: tsnet-state
+              mountPath: /app/tsnet-state
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "goclaw.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: workspace
+          {{- if .Values.persistence.workspace.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "goclaw.fullname" . }}-workspace
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: skills
+          {{- if .Values.persistence.skills.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "goclaw.fullname" . }}-skills
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+        {{- if .Values.tailscale.enabled }}
+        - name: tsnet-state
+          persistentVolumeClaim:
+            claimName: {{ include "goclaw.fullname" . }}-tsnet-state
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

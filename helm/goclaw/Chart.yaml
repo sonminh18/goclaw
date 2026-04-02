@@ -1,0 +1,26 @@
+apiVersion: v2
+name: goclaw
+description: PostgreSQL multi-tenant AI agent gateway with WebSocket RPC + HTTP API
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - ai
+  - agent
+  - gateway
+  - websocket
+  - llm
+home: https://github.com/nextlevelbuilder/goclaw
+sources:
+  - https://github.com/nextlevelbuilder/goclaw
+maintainers:
+  - name: GoClaw Team
+dependencies:
+  - name: redis
+    version: "20.x.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: redis.enabled
+  - name: pgvector
+    version: "0.6.36"
+    repository: https://cagriekin.github.io/charts
+    condition: pgvector.enabled
